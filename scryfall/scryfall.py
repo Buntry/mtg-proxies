@@ -13,6 +13,9 @@ from tempfile import gettempdir
 from functools import lru_cache
 import numpy as np
 from tqdm import tqdm
+from time import sleep
+from datetime import date
+from urllib.parse import quote
 
 cache = Path(gettempdir()) / 'scryfall_cache'
 cache.mkdir(parents=True, exist_ok=True)  # Create cach folder
@@ -118,9 +121,38 @@ def search(q, include_extras="false", include_multilingual="false", unique="card
 @lru_cache(maxsize=None)
 def _get_database(database_name="scryfall-default-cards"):
     bulk_file = get_file(database_name + ".json", "https://archive.scryfall.com/json/" + database_name + ".json")
+    cards = []
     with io.open(bulk_file, mode="r", encoding="utf-8") as json_file:
-        return json.load(json_file)
+        cards = json.load(json_file)
+    add_new_cards(cards)
+    return cards
 
+def add_new_cards(cards):
+    """Add a hack to allow for new cards"""
+    before_len = len(cards)
+    todays_date = date.today().strftime("%Y-%m-%d")
+    all_sets = requests.get("https://api.scryfall.com/sets").json()["data"]
+    sets_after_today = list(filter(lambda s: todays_date < s['released_at'], all_sets))
+    for set in sets_after_today:
+        has_more = True
+        search_uri = set['search_uri']
+        while has_more:
+            sleep(10)
+            has_more = False
+            set_resp = requests.get(search_uri).json()
+            if set_resp:
+                if set_resp['object'] == 'error':
+                    break
+                if set_resp['data']:
+                    for set_resp_card in set_resp['data']:
+                        cards.append(set_resp_card)
+                has_more = set_resp['has_more']
+                if has_more:
+                    search_uri = set_resp['next_page']
+
+
+    after_len = len(cards)
+    print(f"{after_len - before_len} new cards")
 
 def get_card(card_name, set_id=None, collector_number=None):
     """Find a card by it's name and possibly set and collector number.
